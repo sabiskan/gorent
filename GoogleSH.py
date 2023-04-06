@@ -44,7 +44,9 @@ rent_days = [day[0] for day in map(lambda x: (x, 'day' in x), row_tags) if day[1
 
 ru_months = {1: "Янв", 2: "Февр", 3: "Марта", 4: "Апр", 5: "Мая", 6: "Июня", 7: "Июля", 8: "Авг", 9: "Сент", 10: "Окт",
              11: "Нояб", 12: "Дек"}
-transform_dict = dict(zip(range(1, 27), string.ascii_uppercase))
+
+commands = string.ascii_lowercase.replace('d', '').replace('u', '').replace('p', '')
+command_mplace_dict = dict(zip(commands, marketplace_index))
 
 
 def read_excel(r, c):
@@ -54,11 +56,6 @@ def read_excel(r, c):
 
 def write_excel(r, c, val):
     SHEET1w.cell(r, c).value = val
-
-
-def transcell(i, j):
-    val = transform_dict[j] + str(i)
-    return val + ":" + val
 
 
 def format_date(str1):
@@ -119,7 +116,7 @@ token = apisign['token']
 for i in range(2, MAXR + 1):
     excel_date = read_excel(i, Date_end)
     if excel_date is None or excel_date == "":
-        SHEET1r[i - 1][Status-1] = ""
+        SHEET1r[i - 1][Status - 1] = ""
         for j in range(globals()[rent_days[0]], globals()[rent_days[-1]]):
             SHEET1r[i - 1][j - 1] = SHEET1r[i - 1][j - 1].replace("#", "")
     # elif datetime.strptime(excel_date, '%d.%m.%Y %H:%M:%S') < datetime.now():
@@ -128,7 +125,7 @@ for i in range(2, MAXR + 1):
         for j in range(globals()[rent_days[0]], globals()[rent_days[-1]]):
             SHEET1r[i - 1][j - 1] = SHEET1r[i - 1][j - 1].replace("#", "")
     else:
-        SHEET1r[i - 1][Commandos-1] = ""
+        SHEET1r[i - 1][Status - 1] = ""
 
 # r = requests.post('https://api.digiseller.ru/api/seller-sells, json={
 #   "id_seller": 213678,
@@ -177,15 +174,11 @@ for row in allinfo['rows']:
                 excel_account = read_excel(i, Login)
                 if parsed_id == excel_id:
                     if excel_account == account:
-                        print(excel_id, account)
-                        SHEET1r[i - 1][first_mplace_cont - 2 + col - 1] = ""
-                        print(excel_account, i)
+                        SHEET1r[i - 1][first_mplace_cont - first_mplace_id + col - 1] = ''
                         deleted = True
                         for index in range(first_mplace_id, last_mplace_id + 1):
-                            content_id = SHEET1r[i - 1][first_mplace_cont - 2 + index - 1]
-                            print('cont_id:', content_id, i, first_mplace_cont - 2 + index)
+                            content_id = SHEET1r[i - 1][first_mplace_cont - first_mplace_id + index - 1]
                             id_number = SHEET1r[i - 1][index - 1]
-                            print('id_mplace:', id_number)
                             if content_id is not None and id_number is not None and content_id != '':
                                 options = requests.get(
                                     'https://api.digiseller.ru/api/product/content/delete?contentid=' + str(
@@ -193,9 +186,9 @@ for row in allinfo['rows']:
                                         id_number) + '&token=' + str(token))
                                 jsonData = json.loads(options.text)
                                 if jsonData['retval'] == 0:
-                                    content_id = ''
+                                    SHEET1r[i - 1][first_mplace_cont - first_mplace_id + index - 1] = ''
                                 else:
-                                    SHEET1r[i - 1][first_mplace_error - 2 + index - 1] = options.text
+                                    SHEET1r[i - 1][first_mplace_error - first_mplace_id + index - 1] = options.text
                                     deleted = False
                                     print(excel_account, "Delete Error")
                                 print(1, content_id, id_number)
@@ -243,108 +236,51 @@ for row in allinfo['rows']:
         continue
 
 for i in range(1, MAXR):
-    # Delete all p short descr
-    # try:
-    # 	short_descr = wcapi.get("products/"+str(SHEET1r[i][prices_col+13])).json()['short_description']
-    # 	sdput_del = short_descr[:short_descr.find("<p")]
-    # 	data ={"short_description": sdput_del}
-    # 	wcapi.put("products/"+str(SHEET1r[i][prices_col+13]), data).json()
-    # except:
-    # 	print("Not in gorent.shop")
-    if SHEET1r[i][add_com_col - 1] is not None:
-        if SHEET1r[i][add_com_col - 1].find('a') != -1:
-            add_request = requests.post('https://api.digiseller.ru/api/product/content/add/text?token=' + str(token),
-                                        json={
-                                            "product_id": int(SHEET1r[i][ID_plati - 1]),
-                                            "content": [
-                                                {
-                                                    "value": "Login: " + str(
-                                                        SHEET1r[i][account_name_col - 1]) + " Password: " + str(
-                                                        SHEET1r[i][account_name_col - 2]) + "\n\n" + str(
-                                                        SHEET1r[i][ID_plati - 2])
-                                                }
-                                            ]
-                                        })
-            add_request = json.loads(add_request.text)
-            try:
-                SHEET1r[i][add_com_col + 2] = add_request['content'][0]['content_id']
-                SHEET1r[i][add_com_col] = ''
+    if SHEET1r[i][Commandos - 1] is not None:
+        for command in command_mplace_dict:
+            if SHEET1r[i][Commandos - 1].find(command) != -1:
+                add_request = requests.post('https://api.digiseller.ru/api/product/content/add/text?token=' + str(token),
+                                            json={
+                                                "product_id": int(SHEET1r[i][command_mplace_dict[command] - 1]),
+                                                "content": [
+                                                    {
+                                                        "value": "Login: " + str(
+                                                            SHEET1r[i][Login - 1]) + " Password: " + str(
+                                                            SHEET1r[i][Pass - 1]) + "\n\n" + str(
+                                                            SHEET1r[i][first_mplace_id - 2]) #must be StoreName(Steam, UPlay, Epic, etc...)
+                                                    }
+                                                ]
+                                            })
+                add_request = json.loads(add_request.text)
+                SHEET1r[i][first_mplace_cont - first_mplace_id + command_mplace_dict[command] - 1] = add_request['content'][0][
+                    'content_id']
+                SHEET1r[i][Status - 1] = ''
                 SHEET1r[i][Date_end - 1] = ''
-                short_descr = wcapi.get("products/" + str(SHEET1r[i][prices_col + 13])).json()['short_description']
+        if SHEET1r[i][Commandos - 1].find('a') != -1:
+            try:
+                short_descr = wcapi.get("products/" + str(SHEET1r[i][GorentID - 1])).json()['short_description']
                 sdput_del = short_descr[:short_descr.find("<p")]
                 data = {"short_description": sdput_del}
-                wcapi.put("products/" + str(SHEET1r[i][prices_col + 13]), data).json()
+                wcapi.put("products/" + str(SHEET1r[i][GorentID - 1]), data).json()
             except:
                 print(i, " Not in gorent.shop")
                 input()
 
-        if SHEET1r[i][add_com_col - 1].find('b') != -1:
-            add_request = requests.post('https://api.digiseller.ru/api/product/content/add/text?token=' + str(token),
-                                        json={
-                                            "product_id": int(SHEET1r[i][ID_ggsell - 1]),
-                                            "content": [
-                                                {
-                                                    "value": "Login: " + str(
-                                                        SHEET1r[i][account_name_col - 1]) + " Password: " + str(
-                                                        SHEET1r[i][account_name_col - 2]) + "\n\n" + str(
-                                                        SHEET1r[i][ID_plati - 2])
-                                                }
-                                            ]
-                                        })
-            add_request = json.loads(add_request.text)
-            SHEET1r[i][add_com_col + 3] = add_request['content'][0]['content_id']
-            SHEET1r[i][add_com_col] = ''
-            SHEET1r[i][Date_end - 1] = ''
-        if SHEET1r[i][add_com_col - 1].find('c') != -1:
-            add_request = requests.post('https://api.digiseller.ru/api/product/content/add/text?token=' + str(token),
-                                        json={
-                                            "product_id": int(SHEET1r[i][ID_wmcentre - 1]),
-                                            "content": [
-                                                {
-                                                    "value": "Login: " + str(
-                                                        SHEET1r[i][account_name_col - 1]) + " Password: " + str(
-                                                        SHEET1r[i][account_name_col - 2]) + "\n\n" + str(
-                                                        SHEET1r[i][ID_plati - 2])
-                                                }
-                                            ]
-                                        })
-            add_request = json.loads(add_request.text)
-            SHEET1r[i][add_com_col + 4] = add_request['content'][0]['content_id']
-            SHEET1r[i][add_com_col] = ''
-            SHEET1r[i][Date_end - 1] = ''
         deleted = True
-        if SHEET1r[i][add_com_col - 1].find('d') != -1:
-            if SHEET1r[i][add_com_col + 2] is not None and SHEET1r[i][ID_plati - 1] is not None:
-                options = requests.get('https://api.digiseller.ru/api/product/content/delete?contentid=' + str(
-                    SHEET1r[i][add_com_col + 2]) + '&productid=' + str(SHEET1r[i][ID_plati - 1]) + "&token=" + str(
-                    token))
-                jsonData = json.loads(options.text)
-                if jsonData['retval'] == 0:
-                    SHEET1r[i][add_com_col + 2] = ''
-                else:
-                    SHEET1r[i][add_com_col + 6] = options.text
-                    deleted = False
-            if SHEET1r[i][add_com_col + 3] is not None and SHEET1r[i][ID_ggsell - 1] is not None:
-                options = requests.get('https://api.digiseller.ru/api/product/content/delete?contentid=' + str(
-                    SHEET1r[i][add_com_col + 3]) + '&productid=' + str(SHEET1r[i][ID_ggsell - 1]) + "&token=" + str(
-                    token))
-                jsonData = json.loads(options.text)
-                if jsonData['retval'] == 0:
-                    SHEET1r[i][add_com_col + 3] = ''
-                else:
-                    SHEET1r[i][add_com_col + 7] = options.text
-                    deleted = False
-            if SHEET1r[i][add_com_col + 4] is not None and SHEET1r[i][ID_wmcentre - 1] is not None:
-                options = requests.get('https://api.digiseller.ru/api/product/content/delete?contentid=' + str(
-                    SHEET1r[i][add_com_col + 4]) + '&productid=' + str(SHEET1r[i][ID_wmcentre - 1]) + "&token=" + str(
-                    token))
-                jsonData = json.loads(options.text)
-                if jsonData['retval'] == 0:
-                    SHEET1r[i][add_com_col + 4] = ''
-                else:
-                    SHEET1r[i][add_com_col + 8] = options.text
-                    deleted = False
-        if SHEET1r[i][add_com_col - 1].find('u') != -1:
+        if SHEET1r[i][Commandos - 1].find('d') != -1:
+            for cont in enumerate(marketplace_cont):
+                if SHEET1r[i][cont[1] - 1] is not None and SHEET1r[i][cont[1] - 1] != '' and SHEET1r[i][marketplace_index[cont[0]] - 1] is not None:
+                    options = requests.get('https://api.digiseller.ru/api/product/content/delete?contentid=' + str(
+                        SHEET1r[i][cont[1] - 1]) + '&productid=' + str(SHEET1r[i][marketplace_index[cont[0]] - 1]) + "&token=" + str(
+                        token))
+                    jsonData = json.loads(options.text)
+                    if jsonData['retval'] == 0:
+                        SHEET1r[i][cont[1] - 1] = ''
+                    else:
+                        SHEET1r[i][marketplace_error[cont[0]] - 1] = options.text
+                        deleted = False
+
+        if SHEET1r[i][Commandos - 1].find('u') != -1:
             print("UU")
             id_dig = SHEET1r[i][ID_plati - 1]
             if id_dig is not None:
@@ -360,7 +296,9 @@ for i in range(1, MAXR):
                         text = col['modify']
                         option_days = col['text']
                         option_days = int(option_days[:option_days.find(' ')])
-                        excel_days = days_excel_dict[option_days]
+                        for elem in rent_days:
+                            if str(option_days) in elem:
+                                excel_days = globals()[elem]
                         if text == '':
                             SHEET1r[i][excel_days - 1] = base_price
                             continue
@@ -371,20 +309,22 @@ for i in range(1, MAXR):
                         text = col['modify']
                         option_days = col['text']
                         option_days = int(option_days[:option_days.find(' ')])
-                        excel_days = days_excel_dict[option_days]
+                        for elem in rent_days:
+                            if str(option_days) in elem:
+                                excel_days = globals()[elem]
                         if text == '':
                             SHEET1r[i][excel_days - 1] = base_price
                             continue
                         else:
                             SHEET1r[i][excel_days - 1] = base_price + int(text[1:text.find(' ')])
-        if SHEET1r[i][add_com_col - 1].find('p') != -1:
-            print(SHEET1r[i][prices_col - 1], i)
-            for ind_id in range(3):
-                if SHEET1r[i][ID_ggsell - ind_id] is not None and SHEET1r[i][ID_ggsell - ind_id] != '':
+        if SHEET1r[i][Commandos - 1].find('p') != -1:
+            print(SHEET1r[i][Commandos - 1], i)
+            for ind_id in range(first_mplace_id, last_mplace_id + 1):
+                if SHEET1r[i][ind_id - 1] is not None and SHEET1r[i][ind_id - 1] != '':
                     add_request = requests.post('https://api.digiseller.ru/api/product/edit/uniquefixed/' + str(
-                        SHEET1r[i][ID_ggsell - ind_id]) + '?token=' + str(token), json={
+                        SHEET1r[i][ind_id]) + '?token=' + str(token), json={
                         "price": {
-                            "price": SHEET1r[i][prices_col - 1],
+                            "price": SHEET1r[i][globals()[rent_days[0]] - 1],
                             "currency": "RUB"
                         }
                     })
@@ -392,25 +332,25 @@ for i in range(1, MAXR):
             print(add_request)
 
     if deleted:
-        SHEET1r[i][add_com_col - 1] = ''
+        SHEET1r[i][Commandos - 1] = ''
     else:
-        SHEET1r[i][add_com_col - 1] = 'd'
-    rent_date_check = read_excel(i - 1, Date_end)
-    shop_product_id = read_excel(i - 1, prices_col + 14)
-    prev_available_date = read_excel(i - 1, prices_col + 15)
+        SHEET1r[i][Commandos - 1] = 'd'
+    rent_date_check = read_excel(i + 1, Date_end)
+    shop_product_id = read_excel(i + 1, GorentID)
+    prev_available_date = read_excel(i + 1, LastDate)
 
     if shop_product_id is not None:
         if rent_date_check is not None and rent_date_check != '':
             if rent_date_check == prev_available_date:
                 available_data[shop_product_id] = "DEL"
             elif shop_product_id not in available_data:
-                available_data[shop_product_id] = [rent_date_check, i]
+                available_data[shop_product_id] = [rent_date_check, i + 1]
             # SHEET1r[i-2][prices_col+14] = rent_date_check
             elif available_data[shop_product_id] != "DEL" and format_date(
                     available_data[shop_product_id][0]) > format_date(
                     rent_date_check) and rent_date_check != prev_available_date:
                 # print("prev date: ", available_data[shop_product_id][0] ,"last date ", rent_date_check)
-                available_data[shop_product_id] = [rent_date_check, i]
+                available_data[shop_product_id] = [rent_date_check, i + 1]
             # SHEET1r[i-2][prices_col+14] = rent_date_check
         else:
             try:
@@ -427,14 +367,13 @@ for duo in out_of_stock_data:
         format_date(duo[1][0]).day) + ' ' + ru_months[format_date(duo[1][0]).month] + "</p>"
     sdput_clear = short_descr[:short_descr.find("<p")]
     sdput = sdput_clear + html_out_of_stock
-    SHEET1r[duo[1][1] - 2][prices_col + 14] = duo[1][0]
+    SHEET1r[duo[1][1] - 1][LastDate - 1] = duo[1][0]
     if short_descr.find(html_out_of_stock) != -1:
         print("same")
         continue
     data = {"short_description": sdput}
     wcapi.put("products/" + str(duo[0]), data).json()
 
-input()
 
 tet = False
 while tet == False:
