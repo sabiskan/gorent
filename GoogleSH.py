@@ -10,13 +10,31 @@ from woocommerce import API
 
 credentials = {}
 client = gspread.service_account_from_dict(credentials)
-SHEET1w = client.open("Gorent").sheet1
+spreadsheet = client.open("Gorent")
+SHEET1w = spreadsheet.sheet1
 SHEET1r = SHEET1w.get_all_values()
-
 wcapi = API()
 
 MAXR = len(SHEET1r)
 
+def add_col(start_index, endIndex):
+    request_body = {
+        "requests": [
+            {
+                "insertDimension": {
+                    "range": {
+                        "sheetId": SHEET1w.id,
+                        "dimension": "COLUMNS",
+                        "startIndex": start_index,
+                        "endIndex": endIndex
+                    },
+                    "inheritFromBefore": False
+                }
+            }
+        ]
+    }
+
+    spreadsheet.batch_update(request_body)
 
 def maxrange(max_len_row, num_row):  # твои атрибуты (max_col, MAXR)
     if max_len_row <= 26:
@@ -26,21 +44,64 @@ def maxrange(max_len_row, num_row):  # твои атрибуты (max_col, MAXR)
         return "A1:" + chr(ord('A') + max_len_row // 27 - 1) + chr(ord('A') + max_len_row_new - 1) + str(num_row)
 
 
+def find_indices(row_tags, keyword):
+    return [index + 1 for index, tag in enumerate(row_tags) if keyword in tag]
+
+
 max_col = len(max(SHEET1r))
+
 MAXRANGE = maxrange(max_col, MAXR)
 product_ids = []
 available_data = {}
 row_tags = SHEET1w.row_values(1)
-for tag in enumerate(row_tags):
-    globals()[tag[1]] = tag[0] + 1
 
-marketplace_index = [index[0] + 1 for index in enumerate(map(lambda x: 'ID_' in x, row_tags)) if index[1]]
+marketplace_index = find_indices(row_tags, "ID_")
 first_mplace_id, last_mplace_id = min(marketplace_index), max(marketplace_index)
-marketplace_cont = [cont[0] + 1 for cont in enumerate(map(lambda x: 'Cont_' in x, row_tags)) if cont[1]]
+marketplace_cont = find_indices(row_tags, "Cont_")
 first_mplace_cont, last_mplace_cont = min(marketplace_cont), max(marketplace_cont)
-marketplace_error = [error[0] + 1 for error in enumerate(map(lambda x: 'Error_' in x, row_tags)) if error[1]]
+marketplace_error = find_indices(row_tags, "Error_")
 first_mplace_error, last_mplace_error = min(marketplace_error), max(marketplace_error)
 rent_days = [day[0] for day in map(lambda x: (x, 'day' in x), row_tags) if day[1]]
+
+add_mplace_chek = [category for category in [marketplace_index, marketplace_cont, marketplace_error]]
+
+if max(add_mplace_chek, key=len) != sorted(add_mplace_chek, reverse=True, key=len)[-1]:
+    max_elem = (max(add_mplace_chek, key=len), add_mplace_chek.index(max(add_mplace_chek, key=len)))
+    new_elem_index = max_elem[0][-1]
+    add_mplace_chek.remove(max_elem[0])
+    mplace_name = row_tags[new_elem_index - 1].split('_')[1]
+    for elem in add_mplace_chek:
+        elem.append(elem[-1] + 1)
+    add_mplace_chek.insert(max_elem[1], max_elem[0])
+    prefiks = ['ID_', 'Cont_', 'Error_']
+    iter_count = 0
+    for category in range(len(add_mplace_chek)):
+        add_elem_index = add_mplace_chek[category][-1] - 1
+        add_elem = f'{prefiks[category]}{mplace_name}'
+        if add_elem not in row_tags:
+            row_tags.insert(add_elem_index + iter_count, add_elem)
+            add_col(add_elem_index + iter_count, add_elem_index + iter_count + 1)
+            SHEET1r = SHEET1w.get_all_values()
+            iter_count += 1
+    marketplace_index = find_indices(row_tags, "ID_")
+    first_mplace_id, last_mplace_id = min(marketplace_index), max(marketplace_index)
+    marketplace_cont = find_indices(row_tags, "Cont_")
+    first_mplace_cont, last_mplace_cont = min(marketplace_cont), max(marketplace_cont)
+    marketplace_error = find_indices(row_tags, "Error_")
+    first_mplace_error, last_mplace_error = min(marketplace_error), max(marketplace_error)
+    rent_days = [day[0] for day in map(lambda x: (x, 'day' in x), row_tags) if day[1]]
+
+    max_col = len(row_tags)
+    MAXR = len(SHEET1r)
+    MAXRANGE_1 = maxrange(max_col, 1)
+    SHEET1r = SHEET1w.get_all_values()
+    SHEET1w.update(MAXRANGE_1, [[str(cell) for cell in row_tags]])
+    SHEET1r = SHEET1w.get_all_values()
+    max_col = len(max(SHEET1r))
+    MAXRANGE = maxrange(max_col, MAXR)
+
+for tag in enumerate(row_tags):
+    globals()[tag[1]] = tag[0] + 1
 
 ru_months = {1: "Янв", 2: "Февр", 3: "Марта", 4: "Апр", 5: "Мая", 6: "Июня", 7: "Июля", 8: "Авг", 9: "Сент", 10: "Окт",
              11: "Нояб", 12: "Дек"}
@@ -113,19 +174,7 @@ apisign = requests.post()
 apisign = json.loads(apisign.text)
 token = apisign['token']
 
-for i in range(2, MAXR + 1):
-    excel_date = read_excel(i, Date_end)
-    if excel_date is None or excel_date == "":
-        SHEET1r[i - 1][Status - 1] = ""
-        for j in range(globals()[rent_days[0]], globals()[rent_days[-1]]):
-            SHEET1r[i - 1][j - 1] = SHEET1r[i - 1][j - 1].replace("#", "")
-    # elif datetime.strptime(excel_date, '%d.%m.%Y %H:%M:%S') < datetime.now():
-    elif format_date(excel_date) < datetime.now():
-        SHEET1r[i - 1][Status - 1] = "!CHANGE!"
-        for j in range(globals()[rent_days[0]], globals()[rent_days[-1]]):
-            SHEET1r[i - 1][j - 1] = SHEET1r[i - 1][j - 1].replace("#", "")
-    else:
-        SHEET1r[i - 1][Status - 1] = ""
+
 
 # r = requests.post('https://api.digiseller.ru/api/seller-sells, json={
 #   "id_seller": 213678,
@@ -360,6 +409,20 @@ for i in range(1, MAXR):
 available_data = {key: val for key, val in available_data.items() if val != "DEL"}
 out_of_stock_data = list(available_data.items())
 print(out_of_stock_data)
+
+for i in range(2, MAXR + 1):
+    excel_date = read_excel(i, Date_end)
+    if excel_date is None or excel_date == "":
+        SHEET1r[i - 1][Status - 1] = ""
+        for j in range(globals()[rent_days[0]], globals()[rent_days[-1]] + 1):
+            SHEET1r[i - 1][j - 1] = SHEET1r[i - 1][j - 1].replace("#", "")
+    # elif datetime.strptime(excel_date, '%d.%m.%Y %H:%M:%S') < datetime.now():
+    elif format_date(excel_date) < datetime.now():
+        SHEET1r[i - 1][Status - 1] = "!CHANGE!"
+        for j in range(globals()[rent_days[0]], globals()[rent_days[-1]] + 1):
+            SHEET1r[i - 1][j - 1] = SHEET1r[i - 1][j - 1].replace("#", "")
+    else:
+        SHEET1r[i - 1][Status - 1] = ""
 
 for duo in out_of_stock_data:
     short_descr = wcapi.get("products/" + str(duo[0])).json()['short_description']
