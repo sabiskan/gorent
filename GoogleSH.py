@@ -1,12 +1,15 @@
-import gspread
-import json
-import requests
-from datetime import datetime, timedelta
 import hashlib
-import traceback
+import json
 import string
+import traceback
+from datetime import datetime, timedelta
+import asyncio
+import aiohttp
+import gspread
 import pytz
+import requests
 from woocommerce import API
+from contextvars import ContextVar
 
 credentials = {}
 client = gspread.service_account_from_dict(credentials)
@@ -202,45 +205,76 @@ miss_basket = []
 full_basket = []
 print(allinfo)
 
-for row in allinfo['rows']:
+counter = ContextVar('i', default=2)
+gl_excel_account = ContextVar('excel_account', default='')
+deleted = True
+
+async def get_purchase_info(invoice_id, token):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(f'https://api.digiseller.ru/api/purchase/info/{invoice_id}?token={token}') as response:
+            return await response.json()
+
+
+async def get_otions(content_id, id_number, token):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(
+                f'https://api.digiseller.ru/api/product/content/delete?contentid={content_id}&productid={id_number}&token={token}') as response:
+            return await response.json()
+
+
+async def delete_processes():
+    tasks = [delete_process(index) for index in range(first_mplace_id, last_mplace_id + 1)]
+    await asyncio.gather(*tasks)
+
+
+async def delete_process(index):
+    excel_account = gl_excel_account.get()
+    i = counter.get()
+    content_id = SHEET1r[i - 1][first_mplace_cont - first_mplace_id + index - 1]
+    id_number = SHEET1r[i - 1][index - 1]
+    if content_id is not None and id_number is not None and content_id != '':
+        options = await get_otions(content_id, id_number, token)
+        if options['retval'] == 0:
+            SHEET1r[i - 1][first_mplace_cont - first_mplace_id + index - 1] = ''
+        else:
+            SHEET1r[i - 1][first_mplace_error - first_mplace_id + index - 1] = str(options)
+            global deleted
+            deleted = False
+            print(deleted)
+            print(excel_account, "Delete Error")
+        print(1, content_id, id_number)
+
+
+async def process_row(row, token):
     invoice_id = row['invoice_id']
     parsed_id = int(row['product_id'])
     account = row['product_entry'][row['product_entry'].find(': ') + 2:row['product_entry'].find('Password:')].strip()
-    print(account)
     date_pay = datetime.strptime(row['date_pay'], "%Y-%m-%d %H:%M:%S")
-    info = json.loads(
-        requests.get('https://api.digiseller.ru/api/purchase/info/' + str(invoice_id) + '?token=' + str(token)).text)
+    info = await get_purchase_info(invoice_id, token)
     purchase_date = datetime.strptime(info["content"]['purchase_date'], "%d.%m.%Y %H:%M:%S")
+    print(account)
     print('info: ', info)
     print(purchase_date)
     try:
         for col in range(first_mplace_id, last_mplace_id + 1):
             for i in range(2, MAXR + 1):
+                this_counter = counter.get()
+                this_counter = i
+                counter.set(this_counter)
                 try:
                     excel_id = int(read_excel(i, col))
                 except:
                     excel_id = read_excel(i, col)
                 excel_account = read_excel(i, Login)
+                this_excel_account = gl_excel_account.get()
+                this_excel_account = excel_account
+                gl_excel_account.set(this_excel_account)
                 if parsed_id == excel_id:
                     if excel_account == account:
                         SHEET1r[i - 1][first_mplace_cont - first_mplace_id + col - 1] = ''
+                        global deleted
                         deleted = True
-                        for index in range(first_mplace_id, last_mplace_id + 1):
-                            content_id = SHEET1r[i - 1][first_mplace_cont - first_mplace_id + index - 1]
-                            id_number = SHEET1r[i - 1][index - 1]
-                            if content_id is not None and id_number is not None and content_id != '':
-                                options = requests.get(
-                                    'https://api.digiseller.ru/api/product/content/delete?contentid=' + str(
-                                        content_id) + "&productid=" + str(
-                                        id_number) + '&token=' + str(token))
-                                jsonData = json.loads(options.text)
-                                if jsonData['retval'] == 0:
-                                    SHEET1r[i - 1][first_mplace_cont - first_mplace_id + index - 1] = ''
-                                else:
-                                    SHEET1r[i - 1][first_mplace_error - first_mplace_id + index - 1] = options.text
-                                    deleted = False
-                                    print(excel_account, "Delete Error")
-                                print(1, content_id, id_number)
+                        await delete_processes()
                         if not deleted:
                             SHEET1r[i - 1][Commandos - 1] = 'd'
                         if info['content']['options'] is None:
@@ -282,29 +316,136 @@ for row in allinfo['rows']:
     except Exception as e:
         print('Ошибка:\n', traceback.format_exc())
         input()
-        continue
+        return
 
-for i in range(1, MAXR):
+
+async def process_rows(allinfo, token):
+    tasks = [process_row(row, token) for row in allinfo['rows']]
+    await asyncio.gather(*tasks)
+
+
+asyncio.run(process_rows(allinfo, token))
+
+i_abce = ContextVar('i', default=1)
+i_a = ContextVar('i_a', default=1)
+i_d = ContextVar('i_d', default=1)
+i_u = ContextVar('i_u', default=1)
+i_p = ContextVar('i_p', default=1)
+
+
+
+async def upload_abce(token, prod_id, value):
+    async with aiohttp.ClientSession() as session:
+        async with session.post(f'https://api.digiseller.ru/api/product/content/add/text?token={token}',
+                                json={
+                                    "product_id": prod_id,
+                                    "content": [
+                                        {
+                                            "value": value
+                                        }
+                                    ]
+                                }) as response:
+            return await response.json()
+
+async def check_abce_command(command):
+    i = i_abce.get()
+    if SHEET1r[i][Commandos - 1].find(command) != -1:
+        prod_id = int(SHEET1r[i][command_mplace_dict[command] - 1])
+        login = SHEET1r[i][Login - 1]
+        password = SHEET1r[i][Pass - 1]
+        store_name = SHEET1r[i][first_mplace_id - 2]  # Steam, UPlay, Epic, etc
+        value = f'{store_name} \n\nLogin: {login} Password: {password}'
+        add_request = await upload_abce(token, prod_id, value)
+        SHEET1r[i][first_mplace_cont - first_mplace_id + command_mplace_dict[command] - 1] = \
+            add_request['content'][0][
+                'content_id']
+        SHEET1r[i][Status - 1] = ''
+        SHEET1r[i][Date_end - 1] = ''
+
+async def run_abce():
+    tasks = [check_abce_command(command) for command in command_mplace_dict]
+    await asyncio.gather(*tasks)
+
+async def d_command(cont):
+    i = i_d.get()
+    content = SHEET1r[i][cont[1] - 1]
+    prod_id = SHEET1r[i][marketplace_index[cont[0]] - 1]
+    if content is not None and content != '' and prod_id is not None:
+        options = await get_otions(content, prod_id, token)
+        if options['retval'] == 0:
+            SHEET1r[i][cont[1] - 1] = ''
+        else:
+            SHEET1r[i][marketplace_error[cont[0]] - 1] = str(options)
+            global deleted
+            deleted = False
+
+async def run_d_command():
+    tasks = [d_command(cont) for cont in enumerate(marketplace_cont)]
+    await asyncio.gather(*tasks)
+
+async def u_command_get(id_dig):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(
+                f'https://api.digiseller.ru/api/products/info?product_id={id_dig}', headers={'Accept': 'application/json'}) as response:
+            return await response.json()
+
+def set_price(options, base_price):
+    i = i_u.get()
+    for col in options['product']['options'][0]['variants']:
+        text = col['modify']
+        option_days = col['text']
+        option_days = int(option_days[:option_days.find(' ')])
+        for elem in rent_days:
+            if str(option_days) in elem:
+                excel_days = globals()[elem]
+        if text == '':
+            SHEET1r[i][excel_days - 1] = base_price
+            continue
+        else:
+            SHEET1r[i][excel_days - 1] = base_price + int(text[1:text.find(' ')])
+
+async def run_u_command(id_dig, id_dig_dict):
+    if id_dig is not None:
+        id_dig = int(id_dig)
+        if id_dig not in id_dig_dict:
+            options = await u_command_get(id_dig)
+            base_price = int(
+                options['product']['prices']['wmr'][:options['product']['prices']['wmr'].find(' ')])
+            id_dig_dict[id_dig] = [options, base_price]
+            set_price(options, base_price)
+        else:
+            options, base_price = id_dig_dict[id_dig]
+            set_price(options, base_price)
+
+async def p_command_post(mplace, price, token):
+    async with aiohttp.ClientSession() as session:
+        async with session.post(f'https://api.digiseller.ru/api/product/edit/uniquefixed/{mplace}?token={token}', json={
+            "price": {
+                "price": price,
+                "currency": "RUB"
+            }
+        }) as response:
+            response_text = await response.text()
+            add_request = json.loads(response_text)
+            return add_request
+
+async def p_command(ind_id):
+    i = i_p.get()
+    price = str(SHEET1r[i][globals()[rent_days[0]] - 1])
+    mplace = SHEET1r[i][ind_id - 1]
+    if mplace is not None and mplace != '':
+        price = str(SHEET1r[i][globals()[rent_days[0]] - 1])
+        mplace = SHEET1r[i][ind_id - 1]
+        await p_command_post(mplace, price, token)
+
+async def run_p_command():
+    tasks = [p_command(ind_id) for ind_id in range(first_mplace_id, last_mplace_id + 1)]
+    await asyncio.gather(*tasks)
+
+async def all_commands_check(i):
     if SHEET1r[i][Commandos - 1] is not None:
-        for command in command_mplace_dict:
-            if SHEET1r[i][Commandos - 1].find(command) != -1:
-                add_request = requests.post('https://api.digiseller.ru/api/product/content/add/text?token=' + str(token),
-                                            json={
-                                                "product_id": int(SHEET1r[i][command_mplace_dict[command] - 1]),
-                                                "content": [
-                                                    {
-                                                        "value": "Login: " + str(
-                                                            SHEET1r[i][Login - 1]) + " Password: " + str(
-                                                            SHEET1r[i][Pass - 1]) + "\n\n" + str(
-                                                            SHEET1r[i][first_mplace_id - 2]) #must be StoreName(Steam, UPlay, Epic, etc...)
-                                                    }
-                                                ]
-                                            })
-                add_request = json.loads(add_request.text)
-                SHEET1r[i][first_mplace_cont - first_mplace_id + command_mplace_dict[command] - 1] = add_request['content'][0][
-                    'content_id']
-                SHEET1r[i][Status - 1] = ''
-                SHEET1r[i][Date_end - 1] = ''
+        i_abce.set(i)
+        await run_abce()
         if SHEET1r[i][Commandos - 1].find('a') != -1:
             try:
                 short_descr = wcapi.get("products/" + str(SHEET1r[i][GorentID - 1])).json()['short_description']
@@ -312,73 +453,21 @@ for i in range(1, MAXR):
                 data = {"short_description": sdput_del}
                 wcapi.put("products/" + str(SHEET1r[i][GorentID - 1]), data).json()
             except:
-                print(i, " Not in gorent.shop")
-                input()
-
+                print(i + 1, " Not in gorent.shop")
         deleted = True
         if SHEET1r[i][Commandos - 1].find('d') != -1:
-            for cont in enumerate(marketplace_cont):
-                if SHEET1r[i][cont[1] - 1] is not None and SHEET1r[i][cont[1] - 1] != '' and SHEET1r[i][marketplace_index[cont[0]] - 1] is not None:
-                    options = requests.get('https://api.digiseller.ru/api/product/content/delete?contentid=' + str(
-                        SHEET1r[i][cont[1] - 1]) + '&productid=' + str(SHEET1r[i][marketplace_index[cont[0]] - 1]) + "&token=" + str(
-                        token))
-                    jsonData = json.loads(options.text)
-                    if jsonData['retval'] == 0:
-                        SHEET1r[i][cont[1] - 1] = ''
-                    else:
-                        SHEET1r[i][marketplace_error[cont[0]] - 1] = options.text
-                        deleted = False
-
+            i_d.set(i)
+            await run_d_command()
         if SHEET1r[i][Commandos - 1].find('u') != -1:
             print("UU")
+            i_u.set(i)
+            id_dig_dict = {}
             id_dig = SHEET1r[i][ID_plati - 1]
-            if id_dig is not None:
-                id_dig = int(id_dig)
-                if product_ids.count(id_dig) == 0:
-                    product_ids.append(id_dig)
-                    options = requests.get('https://api.digiseller.ru/api/products/info?product_id=' + str(id_dig),
-                                           headers={'Accept': 'application/json'})
-                    options = json.loads(options.text)
-                    base_price = int(
-                        options['product']['prices']['wmr'][:options['product']['prices']['wmr'].find(' ')])
-                    for col in options['product']['options'][0]['variants']:
-                        text = col['modify']
-                        option_days = col['text']
-                        option_days = int(option_days[:option_days.find(' ')])
-                        for elem in rent_days:
-                            if str(option_days) in elem:
-                                excel_days = globals()[elem]
-                        if text == '':
-                            SHEET1r[i][excel_days - 1] = base_price
-                            continue
-                        else:
-                            SHEET1r[i][excel_days - 1] = base_price + int(text[1:text.find(' ')])
-                else:
-                    for col in options['product']['options'][0]['variants']:
-                        text = col['modify']
-                        option_days = col['text']
-                        option_days = int(option_days[:option_days.find(' ')])
-                        for elem in rent_days:
-                            if str(option_days) in elem:
-                                excel_days = globals()[elem]
-                        if text == '':
-                            SHEET1r[i][excel_days - 1] = base_price
-                            continue
-                        else:
-                            SHEET1r[i][excel_days - 1] = base_price + int(text[1:text.find(' ')])
+            await run_u_command(id_dig, id_dig_dict)
         if SHEET1r[i][Commandos - 1].find('p') != -1:
+            i_p.set(i)
             print(SHEET1r[i][Commandos - 1], i)
-            for ind_id in range(first_mplace_id, last_mplace_id + 1):
-                if SHEET1r[i][ind_id - 1] is not None and SHEET1r[i][ind_id - 1] != '':
-                    add_request = requests.post('https://api.digiseller.ru/api/product/edit/uniquefixed/' + str(
-                        SHEET1r[i][ind_id]) + '?token=' + str(token), json={
-                        "price": {
-                            "price": SHEET1r[i][globals()[rent_days[0]] - 1],
-                            "currency": "RUB"
-                        }
-                    })
-                    add_request = json.loads(add_request.text)
-            print(add_request)
+            await run_p_command()
 
     if deleted:
         SHEET1r[i][Commandos - 1] = ''
@@ -397,7 +486,7 @@ for i in range(1, MAXR):
             # SHEET1r[i-2][prices_col+14] = rent_date_check
             elif available_data[shop_product_id] != "DEL" and format_date(
                     available_data[shop_product_id][0]) > format_date(
-                    rent_date_check) and rent_date_check != prev_available_date:
+                rent_date_check) and rent_date_check != prev_available_date:
                 # print("prev date: ", available_data[shop_product_id][0] ,"last date ", rent_date_check)
                 available_data[shop_product_id] = [rent_date_check, i + 1]
             # SHEET1r[i-2][prices_col+14] = rent_date_check
@@ -405,7 +494,14 @@ for i in range(1, MAXR):
             try:
                 available_data[shop_product_id] = "DEL"
             except:
-                continue
+                return
+
+async def run_all_commands_chek():
+    tasks = [all_commands_check(i) for i in range(1, MAXR)]
+    await asyncio.gather(*tasks)
+
+asyncio.run(run_all_commands_chek())
+
 available_data = {key: val for key, val in available_data.items() if val != "DEL"}
 out_of_stock_data = list(available_data.items())
 print(out_of_stock_data)
@@ -415,12 +511,12 @@ for i in range(2, MAXR + 1):
     if excel_date is None or excel_date == "":
         SHEET1r[i - 1][Status - 1] = ""
         for j in range(globals()[rent_days[0]], globals()[rent_days[-1]] + 1):
-            SHEET1r[i - 1][j - 1] = SHEET1r[i - 1][j - 1].replace("#", "")
+            SHEET1r[i - 1][j - 1] = str(SHEET1r[i - 1][j - 1]).replace("#", "")
     # elif datetime.strptime(excel_date, '%d.%m.%Y %H:%M:%S') < datetime.now():
     elif format_date(excel_date) < datetime.now():
         SHEET1r[i - 1][Status - 1] = "!CHANGE!"
         for j in range(globals()[rent_days[0]], globals()[rent_days[-1]] + 1):
-            SHEET1r[i - 1][j - 1] = SHEET1r[i - 1][j - 1].replace("#", "")
+            SHEET1r[i - 1][j - 1] = str(SHEET1r[i - 1][j - 1]).replace("#", "")
     else:
         SHEET1r[i - 1][Status - 1] = ""
 
@@ -436,7 +532,6 @@ for duo in out_of_stock_data:
         continue
     data = {"short_description": sdput}
     wcapi.put("products/" + str(duo[0]), data).json()
-
 
 tet = False
 while tet == False:
