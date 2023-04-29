@@ -165,12 +165,13 @@ for product_id in product_ids:
     hashIDs += str(product_id)
 
 finalhash1 = ()
+key = hashlib.sha256(finalhash1)
 
 finalhash2 = ()
 apikey = hashlib.sha256(finalhash2)
 apisign = requests.post()
 apisign = json.loads(apisign.text)
-token = apisign['token']
+
 
 r = requests.post('https://api.digiseller.ru/api/seller-sells/v2?token=' + str(token), json={
     "product_ids": product_ids,
@@ -376,7 +377,7 @@ async def process_rows(allinfo, token):
     await asyncio.gather(*tasks)
 
 
-asyncio.run(process_rows(allinfo, token))
+
 
 i_abce = ContextVar('i', default=1)
 i_a = ContextVar('i_a', default=1)
@@ -408,10 +409,17 @@ async def check_abce_command(command):
         store_name = SHEET1r[i][first_mplace_id - 2]  # Steam, UPlay, Epic, etc
         value = f'{store_name} \n\nLogin: {login} Password: {password}'
         add_request = await upload_abce(token, prod_id, value)
-        SHEET1r[i][first_mplace_cont - first_mplace_id + command_mplace_dict[command] - 1] = \
-            add_request['content'][0]['content_id']
-        SHEET1r[i][Status - 1] = ''
-        SHEET1r[i][Date_end - 1] = ''
+        try:
+            SHEET1r[i][first_mplace_cont - first_mplace_id + command_mplace_dict[command] - 1] = \
+                add_request['content'][0]['content_id']
+            SHEET1r[i][Status - 1] = ''
+            SHEET1r[i][Date_end - 1] = ''
+        except:
+            print(f'Error in {row_tags[command_mplace_dict[command] - 1]}, row {i + 1}')
+            print(add_request)
+            input('Press ENTER to try add again')
+            time.sleep(1/3)
+            return await check_abce_command(command)
 
 async def run_abce():
     tasks = [check_abce_command(command) for command in command_mplace_dict]
@@ -499,36 +507,66 @@ async def p_command_set_default_price(mplace, price, token):
             response_text = await response.text()
             return response_text
 
-async def p_command_change_var(options_id, var_id, rate):
+async def p_command_defvar_change_order(options_id, var_id):
     async with aiohttp.ClientSession() as session:
         async with session.post(f'https://api.digiseller.ru/api/products/options/{options_id}/variants/{var_id}?token={token}',
                                 headers={'Accept': 'application/json'},
                         json={
-                            "type": "priceplus",
-                            "rate": rate,
+                            "order": 1
                         }) as response:
             response_text = await response.text()
             return response_text
 
-async def p_command_set_var(options_id, variants_id, cur_rent_days, def_price, variants_ids, i):
-    cur_date = cur_rent_days[variants_id]
-    price = int(read_excel(i + 1, globals()[cur_date]).replace('#', ''))
+async def p_command_delvar(options_id, var_id):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(f'https://api.digiseller.ru/api/products/options/{options_id}/variants/{var_id}/delete?token={token}',
+                    headers={'Accept': 'application/json'}) as response:
+            response_text = await response.text()
+            return response_text
+
+async def p_command_set_var(options_id, variant, cur_rent_days, def_price, variants, order_dict, def_rent, ind_id, i):
+    cur_date = cur_rent_days[variant]
+    price_cell = read_excel(i + 1, globals()[cur_date])
+    price = int(price_cell.replace('#', ''))
     rate = price - int(def_price)
-    var_id = variants_ids[variants_id]
+    var_id = variants[variant]['variant_id']
     if cur_date != '7days':
         compare_price = int(read_excel(i + 1, globals()[cur_date] - 1).replace('#', ''))
         if price <= compare_price:
-            print(f'Please check price for {rent_days[variants_id]} row {i}')
-            input('Pls press ENTER for continue')
-        else:
+            print(f'Please check price for {rent_days[variant]} row {i}')
+            print(f'price {price}')
+            print(f'compare price: {compare_price}')
+            new_price_cell = input('Put correct price here --> ')
+            if '#' in price_cell:
+                new_price_cell = f'#{new_price_cell}'
+            SHEET1r[i][globals()[cur_date] - 1] = new_price_cell
+            price = int(new_price_cell.replace('#', ''))
+            rate = price - int(def_price)
+    variants[variant]['rate'] = rate
+    variants[variant]['order'] = order_dict[cur_date]
+    variants[variant]['type'] = 'priceplus'
+    if cur_date == def_rent:
+        await p_command_defvar_change_order(options_id, var_id)
+        return
+    await p_command_delvar(options_id, var_id)
+    if isinstance(variants[variant].pop('variant_id', 'error'), str):
+        print(f'error pop variant id for {cur_date}, row {i+1}, mplace: {row_tags[ind_id - 1]}')
+        print(f'variant {variants[variant]} will be not changed')
+        input('Press ENTER to continue')
+        variants.pop(variant)
 
-            await p_command_change_var(options_id, var_id, rate)
-    else:
-        await p_command_change_var(options_id, var_id, rate)
-
-async def p_command_change_all_vars(options_id, cur_rent_days, def_price, variants_ids, i):
-    tasks = [p_command_set_var(options_id, variants_id, cur_rent_days, def_price, variants_ids, i) for variants_id in range(len(variants_ids))]
+async def p_command_change_all_vars(options_id, cur_rent_days, def_price, variants, order_dict, def_rent, ind_id, i):
+    tasks = [p_command_set_var(options_id, variant, cur_rent_days, def_price, variants, order_dict, def_rent, ind_id, i) for variant in range(len(variants))]
     await asyncio.gather(*tasks)
+
+async def p_command_create_vars(options_id, sorted_vars):
+    async with aiohttp.ClientSession() as session:
+        async with session.post(f'https://api.digiseller.ru/api/products/options/{options_id}/variants?token={token}',
+                                   headers={'Accept': 'application/json'}, json={
+                                                      "variants": sorted_vars}) as response:
+            response_text = await response.text()
+            return response_text
+
 
 async def p_command(ind_id):
     i = i_p.get()
@@ -536,31 +574,43 @@ async def p_command(ind_id):
     if mplace is not None and mplace != '':
         options_get = await p_command_get_optinos(mplace, token)
         if options_get is None:
-            print(f"Error getting options for mplace {mplace}, row {i + 1}")
+            print(f"Error getting options for mplace {row_tags[ind_id - 1]}, id: {mplace}, row {i + 1}")
             input('Press ENTER to continue')
             return
         if not options_get['content']:
-            print(f"No options found for mplace {mplace}, row {i + 1}")
+            print(f"No options found for mplace {row_tags[ind_id - 1]}, id: {mplace}, row {i + 1}")
             input('Press ENTER to continue')
             return
         options_id = options_get['content'][0]['id']
         options_vars = await p_command_get_vars(options_id, token)
-        variants = options_vars['content']['variants']
-        variants_ids = [variant['variant_id'] for variant in variants]
-        current_rent_days = [rent_day['name'][0]['value'].replace(' ', '') for rent_day in variants]
-        default_rent = sorted(current_rent_days, key=lambda x: int(x.replace('days', '')))[0]
-        default_price = read_excel(i + 1, globals()[default_rent]).replace('#', '')
-        min_price = read_excel(MAXR, ind_id)
-        if float(default_price) <= float(min_price):
-            print(default_price)
-            print(min_price)
 
+        variants = options_vars['content']['variants']
+        current_rent_days = [rent_day['name'][0]['value'].replace(' ', '') for rent_day in variants]
+        sort_current_rent_days = sorted(current_rent_days, key=lambda x: int(x.replace('days', '')))
+        default_rent = sort_current_rent_days[0]
+        default_price_cell = read_excel(i + 1, globals()[default_rent])
+        default_price = default_price_cell.replace('#', '')
+        min_price = read_excel(MAXR, ind_id)
+        order_dict = dict(zip(sort_current_rent_days, range(1, len(sort_current_rent_days) + 1)))
+        if float(default_price) <= float(min_price):
+            print(f'row {i+1}, {row_tags[ind_id - 1]} changing price:')
+            print(f'excel price: {default_price}')
+            print(f'min_available: {min_price}')
+            input('Press ENTER for changing the price to min_available')
+            new_price_cell = min_price
+            if '#' in default_price_cell:
+                new_price_cell = f'#{new_price_cell}'
+            SHEET1r[i][globals()[default_rent] - 1] = new_price_cell
             default_price = min_price
 
         await p_command_set_default_price(mplace, default_price, token)
-        await p_command_change_all_vars(options_id, current_rent_days, default_price, variants_ids, i)
+        await p_command_change_all_vars(options_id, current_rent_days, default_price, variants, order_dict, default_rent, ind_id, i)
+
+        sorted_variants = sorted(variants, key=lambda x: int(x['order']))[1:]
+        await p_command_create_vars(options_id, sorted_variants)
+
     else:
-        print(f'Error!!! mplace {mplace} is empty, row {i+1}')
+        print(f'Error!!! mplace {row_tags[ind_id - 1]} is empty, row {i+1}')
         input('Press ENTER to continue')
 
 
@@ -574,12 +624,12 @@ async def all_commands_check(i):
         i_abce.set(i)
         await run_abce()
         if SHEET1r[i][Commandos - 1].find('a') != -1:
-            print(f'doing com a, i: {i}')
             try:
-                short_descr = wcapi.get("products/" + str(SHEET1r[i][GorentID - 1])).json()['short_description']
+                gorent_prod_id = SHEET1r[i][GorentID - 1]
+                short_descr = wcapi.get(f'products/{gorent_prod_id}').json()['short_description']
                 sdput_del = short_descr[:short_descr.find("<p")]
                 data = {"short_description": sdput_del}
-                wcapi.put("products/" + str(SHEET1r[i][GorentID - 1]), data).json()
+                wcapi.put(f'products/{gorent_prod_id}', data).json()
             except:
                 print(i + 1, " Not in gorent.shop")
                 print('Press ENTER to continue')
@@ -597,11 +647,11 @@ async def all_commands_check(i):
             i_p.set(i)
             print(SHEET1r[i][Commandos - 1], i + 1)
             if read_excel(i + 1, first_mplace_id) not in changed_games:
+                changed_games[read_excel(i + 1, first_mplace_id)] = []
+                await run_p_command()
                 changed_games[read_excel(i + 1, first_mplace_id)] = [
                     read_excel(i + 1, globals()[rent_day]).replace('#', '') for rent_day in
                     rent_days]
-
-                await run_p_command()
 
     if deleted:
         SHEET1r[i][Commandos - 1] = ''
@@ -636,11 +686,12 @@ async def run_all_commands_chek():
     tasks = [all_commands_check(i) for i in range(1, MAXR)]
     await asyncio.gather(*tasks)
 
-def main():
-    asyncio.run(run_all_commands_chek())
+async def main():
+    await process_rows(allinfo, token)
+    await run_all_commands_chek()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
 
 for i in range(2, MAXR + 1):
     if SHEET1r[i - 1][first_mplace_id - 1] in changed_games:
