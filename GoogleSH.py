@@ -712,10 +712,12 @@ for i in range(2, MAXR + 1):
         for j in range(globals()[rent_days[0]], globals()[rent_days[-1]] + 1):
             SHEET1r[i - 1][j - 1] = str(SHEET1r[i - 1][j - 1]).replace("#", "")
     # elif datetime.strptime(excel_date, '%d.%m.%Y %H:%M:%S') < datetime.now():
-    elif format_date(excel_date) < datetime.now():
-        SHEET1r[i - 1][Status - 1] = "!CHANGE!"
-        for j in range(globals()[rent_days[0]], globals()[rent_days[-1]] + 1):
-            SHEET1r[i - 1][j - 1] = str(SHEET1r[i - 1][j - 1]).replace("#", "")
+    elif (time_zone_ru.localize(format_date(excel_date)) - datetime.now(time_zone_ru)).total_seconds() / 60 < 110:
+        SHEET1r[i - 1][Status - 1] = "2HOURS!"
+        if time_zone_ru.localize(format_date(excel_date)) < datetime.now(time_zone_ru):
+            SHEET1r[i - 1][Status - 1] = "!CHANGE! 2HOURS!"
+            for j in range(globals()[rent_days[0]], globals()[rent_days[-1]] + 1):
+                SHEET1r[i - 1][j - 1] = str(SHEET1r[i - 1][j - 1]).replace("#", "")
     else:
         SHEET1r[i - 1][Status - 1] = ""
 
